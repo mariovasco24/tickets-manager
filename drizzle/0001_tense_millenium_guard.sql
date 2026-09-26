@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `worktree_removed_at` integer;

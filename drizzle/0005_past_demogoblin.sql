@@ -1,0 +1,1 @@
+ALTER TABLE `job_worktrees` ADD `baseline_dirty` text;

@@ -1,0 +1,16 @@
+{
+  "demo": {
+    "domain": "https://demo.qrvey.com",
+    "api_key": "RELLENAR: api_key del widget en este ambiente",
+    "app_id": "RELLENAR",
+    "user_id": "RELLENAR",
+    "qrveyid": "RELLENAR: qrveyid del asset por defecto (dashboard o chart)"
+  },
+  "qa": {
+    "domain": "https://qa.ejemplo.qrveyapp.com",
+    "api_key": "RELLENAR",
+    "app_id": "RELLENAR",
+    "user_id": "RELLENAR",
+    "qrveyid": "RELLENAR"
+  }
+}

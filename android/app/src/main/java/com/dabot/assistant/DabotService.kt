@@ -46,6 +46,9 @@ class DabotService : Service() {
     private var tone: ToneGenerator? = null
 
     private val queue = ArrayDeque<Utterance>()
+    /** Preguntas ya dichas (o en cola), por VoiceDecision.key. */
+    private val asked = mutableSetOf<String>()
+    private var speechProblem: String? = null
     private var branchSearch: Job? = null
     private var speakingId: String? = null
     private var listenAfterSpeech = false
@@ -65,7 +68,8 @@ class DabotService : Service() {
         tone = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 70) }.getOrNull()
         speaker = Speaker(this, settings,
             onWord = { Dabot.update { it.copy(wordTick = it.wordTick + 1) } },
-            onDone = ::onSpoken)
+            onFinished = ::onSpoken,
+            onProblem = { p -> speechProblem = p; refreshSpeechProblem() })
         listener = CommandListener(this, settings,
             onLevel = { level -> Dabot.update { it.copy(micLevel = level) } },
             onPartial = { text -> Dabot.update { it.copy(heard = text) } },
@@ -204,8 +208,17 @@ class DabotService : Service() {
         if (front) queue.addFirst(u) else queue.addLast(u)
     }
 
+    /** Error de síntesis o volumen multimedia a 0 (DABOT hablaría sin que se oiga). */
+    private fun refreshSpeechProblem() {
+        val audio = getSystemService(AudioManager::class.java)
+        val muted = audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+        Dabot.update { it.copy(speechProblem = speechProblem ?: if (muted) "Volumen multimedia en 0: DABOT habla pero no se oye" else null) }
+    }
+
     private fun speakNext() {
+        refreshSpeechProblem()
         val u = queue.removeFirstOrNull() ?: return goIdle()
+        Log.i(TAG, "Dice (escuchar después=${u.listen}): ${u.text}")
         stopWake()
         setMode(Mode.SPEAKING)
         Dabot.update { it.copy(said = u.display) }
@@ -214,6 +227,7 @@ class DabotService : Service() {
     }
 
     private fun onSpoken(id: String) {
+        Log.i(TAG, "Terminó de hablar ($id), en cola: ${queue.size}")
         if (id != speakingId) return
         speakingId = null
         when {
@@ -250,7 +264,38 @@ class DabotService : Service() {
             }
             s.copy(job = shown, decisions = decisions, seen = seen, jobs = jobs)
         }
-        enqueue(Utterance(r.say, r.display ?: r.say, r.listen), front)
+        speak(r, front)
+    }
+
+    /**
+     * Toda pregunta se dice en voz alta y después se escucha la respuesta, llegue por
+     * donde llegue, y una sola vez. El anuncio del servidor es la versión buena (lleva el
+     * resumen: "Ya terminé con…"); si tras una respuesta el anuncio no llega enseguida
+     * (canal de avisos caído o reconectando), se dice la pregunta desde la respuesta.
+     */
+    private fun speak(r: VoiceReply, front: Boolean) {
+        val d = r.decision
+        val announcement = r.jobId != null
+        Log.i(TAG, "${if (announcement) "Anuncio" else "Respuesta"} [modo=$mode, decisión=${d?.kind}, ya dicha=${d?.key in asked}]: ${r.say}")
+        when {
+            d == null -> enqueue(Utterance(r.say, r.display ?: r.say, r.listen), front)
+            announcement && d.key in asked -> Unit // ya dicha (llegó antes por la respuesta)
+            announcement -> {
+                asked += d.key
+                enqueue(Utterance(r.say, r.display ?: d.question, listen = true), front)
+            }
+            r.listen || d.key in asked -> enqueue(Utterance(r.say, r.display ?: r.say, r.listen), front)
+            else -> {
+                enqueue(Utterance(r.say, r.display ?: r.say, listen = false), front)
+                main.postDelayed({
+                    val still = Dabot.state.value.decisions[d.jobId]?.key == d.key
+                    if (still && asked.add(d.key)) {
+                        enqueue(Utterance(d.speech, d.question, listen = true), front = false)
+                        if (mode == Mode.IDLE) speakNext()
+                    }
+                }, ANNOUNCE_GRACE_MS)
+            }
+        }
     }
 
     private fun onAnnouncement(r: VoiceReply) {
@@ -279,7 +324,10 @@ class DabotService : Service() {
             }
             if (!greeted) {
                 greeted = true
-                enqueue(Utterance(st.say, st.say, listen = false), front = false)
+                // Si al conectar hay algo pendiente, se pregunta y se espera la respuesta.
+                val d = st.focusDecision
+                if (d != null) asked += d.key
+                enqueue(Utterance(st.say, d?.question ?: st.say, listen = d != null), front = false)
                 if (mode == Mode.IDLE || mode == Mode.STARTING) speakNext()
             }
         }
@@ -342,6 +390,13 @@ class DabotService : Service() {
                 if (!settings.wakeEnabled) stopWake() else startWake()
             }
             is Action.Test -> sayNext(action.text, listen = false)
+            Action.RaiseVolume -> {
+                val audio = getSystemService(AudioManager::class.java)
+                val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                audio.setStreamVolume(AudioManager.STREAM_MUSIC, (max * 0.7f).toInt().coerceAtLeast(1), AudioManager.FLAG_SHOW_UI)
+                refreshSpeechProblem()
+                sayNext("Así me oyes.", listen = false)
+            }
             is Action.SearchBranches -> {
                 // Mientras escribes, solo cuenta la última búsqueda.
                 branchSearch?.cancel()
@@ -388,5 +443,7 @@ class DabotService : Service() {
         private const val TAG = "Dabot"
         private const val CHANNEL = "dabot"
         private const val WAKE_REFRESH_MS = 4 * 60_000L
+        /** Cuánto se espera el anuncio de una pregunta antes de decirla desde la respuesta. */
+        private const val ANNOUNCE_GRACE_MS = 1_500L
     }
 }

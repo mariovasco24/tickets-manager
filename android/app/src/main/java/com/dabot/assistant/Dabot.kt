@@ -16,6 +16,8 @@ data class UiState(
     val wakeError: String? = null,
     /** El detector tiene el micrófono ahora mismo. */
     val wakeListening: Boolean = false,
+    /** Problema de la voz (síntesis o volumen); null = habla bien. */
+    val speechProblem: String? = null,
     /** Lo último que oyó el detector (diagnóstico). */
     val wakeHeard: String = "",
     /** Nivel del micrófono mientras escucha un comando, 0..1. */
@@ -51,6 +53,7 @@ sealed interface Action {
     data object SettingsChanged : Action
     data class Test(val text: String) : Action
     data class SearchBranches(val query: String) : Action
+    data object RaiseVolume : Action
 }
 
 /** Bus entre la Activity (pantalla) y DabotService (oído, voz y red). */

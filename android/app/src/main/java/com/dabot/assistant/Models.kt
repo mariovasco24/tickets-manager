@@ -47,7 +47,12 @@ data class VoiceDecision(
     val question: String,
     val options: List<VoiceOption>,
     val freeText: Boolean,
+    /** La pregunta y cómo responderla, lista para decirla en voz alta. */
+    val speech: String,
 ) {
+    /** Identifica "esta pregunta" para decirla una sola vez. */
+    val key: String get() = "$jobId|$kind|$question"
+
     companion object {
         fun from(o: JSONObject) = VoiceDecision(
             kind = o.getString("kind"),
@@ -56,6 +61,7 @@ data class VoiceDecision(
             question = o.optString("question"),
             options = o.optJSONArray("options").objects().map { VoiceOption(it.getString("id"), it.getString("label")) },
             freeText = o.optBoolean("freeText"),
+            speech = o.optString("speech").ifBlank { o.optString("question") },
         )
     }
 }

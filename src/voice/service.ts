@@ -3,7 +3,7 @@ import type { Intake } from '../intake.js';
 import type { JobService } from '../jobs/service.js';
 import { logger } from '../logger.js';
 import { STATUS_LABELS, isTerminal, type JobDetailDto, type JobDto } from '../shared/job-types.js';
-import { pendingDecision, type DecisionContext, type VoiceDecision } from './decision.js';
+import { pendingDecision, shorten, type DecisionContext, type VoiceDecision } from './decision.js';
 import { matchBranch, parseIntent, type VoiceIntent } from './parse.js';
 import { plain, spell, toSpeech } from './speech.js';
 
@@ -122,7 +122,7 @@ export class VoiceService {
     const focus = await this.focus();
     const list = this.visibleJobs();
     const say = focus?.decision
-      ? toSpeech(`${focus.decision.question}`)
+      ? focus.decision.speech
       : list.some((j) => !isTerminal(j.status))
         ? toSpeech(this.statusSentence(list))
         : 'Hola. Dime qué ticket arreglo.';
@@ -241,7 +241,7 @@ export class VoiceService {
       const detail = this.jobs.getDetail(active.id);
       const decision = detail ? this.decisionFor(detail, await this.branches()) : undefined;
       return {
-        say: toSpeech(`${key} ya está en marcha: ${STATUS_LABELS[active.status].toLowerCase()}.${decision ? ` ${decision.question}` : ''}`),
+        say: toSpeech(`${key} ya está en marcha: ${STATUS_LABELS[active.status].toLowerCase()}.${decision ? ` ${decision.speech}` : ''}`, 600),
         listen: Boolean(decision),
         job: this.voiceJob(active),
         ...(decision ? { decision } : {}),
@@ -398,7 +398,7 @@ export class VoiceService {
     const a: VoiceAnnouncement = {
       id: ++this.seq,
       jobId,
-      say: toSpeech(say),
+      say: toSpeech(say, 600),
       display: plain(decision?.question ?? say),
       listen: Boolean(decision),
       job: this.voiceJob(detail),
@@ -410,22 +410,25 @@ export class VoiceService {
 
   private announcementText(job: JobDetailDto, decision: VoiceDecision | undefined, prev: string | undefined): string | undefined {
     const k = job.ticketKey;
-    const wasFixed = prev?.startsWith('fixed|') ?? false;
-    const fixedLine = () => {
-      const tests = job.testsResult === 'passed' ? ' Los tests pasan.' : job.testsResult === 'failed' ? ' Ojo: hay tests fallando.' : '';
-      return `${k} está solucionado.${tests}`;
-    };
+    const [prevStatus, prevKind] = (prev ?? '').split('|');
+    const wasFixed = prevStatus === 'fixed';
     if (decision) {
-      const lead = job.status === 'fixed' && !wasFixed ? `${fixedLine()} ` : `${k}: `;
-      return `${lead}${decision.question}`;
+      let lead = '';
+      if (job.status === 'fixed' && !wasFixed) lead = this.fixedSummary(job);
+      else if (decision.kind === 'jira_merge') lead = `Pull request abierto para ${k}.`;
+      else if (decision.kind === 'jira_comment' && prevKind === 'jira_merge') lead = `${k}:`;
+      else if (decision.kind !== 'repos' && decision.kind !== 'branch' && !decision.question.includes(k)) lead = `${k}:`;
+      return `${lead} ${decision.speech}`.trim();
     }
     switch (job.status) {
       case 'triaging':
         return `Analizando en qué repositorios está ${k}.`;
+      case 'creating_worktree':
+        return `Preparo los worktrees de ${k}.`;
       case 'working':
-        return prev?.startsWith('working|') ? undefined : `Claude Code está trabajando en ${k}.`;
+        return prevStatus === 'working' ? undefined : `Claude Code está trabajando en ${k}. Te aviso cuando termine o si tiene preguntas.`;
       case 'fixed':
-        return wasFixed ? `Listo con ${k}. No queda nada pendiente.` : fixedLine();
+        return wasFixed ? this.closingLine(job) : `${this.fixedSummary(job)} No hay nada más que confirmar.`;
       case 'cannot_fix':
         return `No pude arreglar ${k}. ${job.failureReason ?? ''}`;
       case 'failed':
@@ -435,6 +438,29 @@ export class VoiceService {
       default:
         return undefined;
     }
+  }
+
+  /** "Ya terminé con…": resumen del fix para decirlo en voz alta. */
+  private fixedSummary(job: JobDetailDto): string {
+    const parts = [`Ya terminé con ${job.ticketKey}.`];
+    const summary = job.fixSummary ?? job.solution ?? job.issue;
+    if (summary) parts.push(shorten(plain(summary), 320));
+    const files = job.filesChanged.length;
+    if (files) parts.push(`Cambié ${files} archivo${files > 1 ? 's' : ''}.`);
+    if (job.testsResult === 'passed') parts.push('Los tests pasan.');
+    else if (job.testsResult === 'failed') parts.push('Ojo: hay tests fallando.');
+    if (job.regressionTest?.verdict === 'verified') parts.push('El test de regresión falla sin el fix y pasa con él.');
+    return parts.join(' ');
+  }
+
+  /** Cuando ya no queda nada que confirmar tras el fix. */
+  private closingLine(job: JobDetailDto): string {
+    const has = (type: string) => job.events.some((e) => e.type === type);
+    const done: string[] = [];
+    if (job.worktrees.some((w) => w.prUrl)) done.push('PR abierto');
+    if (has('jira_merge_transition')) done.push('ticket movido en Jira');
+    if (has('jira_comment')) done.push('reporte publicado');
+    return `Todo listo con ${job.ticketKey}${done.length ? `: ${done.join(', ')}` : ''}. No queda nada pendiente.`;
   }
 
   private signature(job: JobDetailDto, decision: VoiceDecision | undefined): string {
@@ -515,7 +541,7 @@ export class VoiceService {
   private async statusReply(): Promise<VoiceReply> {
     const focus = await this.focus();
     const sentence = this.statusSentence(this.visibleJobs());
-    const say = focus?.decision ? `${sentence} Pendiente: ${focus.decision.ticketKey}. ${focus.decision.question}` : sentence;
+    const say = focus?.decision ? `${sentence} Pendiente: ${focus.decision.speech}` : sentence;
     return {
       say: toSpeech(say, 600),
       listen: Boolean(focus?.decision),

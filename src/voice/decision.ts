@@ -1,5 +1,5 @@
 import type { JobDetailDto } from '../shared/job-types.js';
-import { plain } from './speech.js';
+import { plain, toSpeech } from './speech.js';
 
 /**
  * Qué se espera de una persona en un job, con las mismas reglas que los
@@ -33,6 +33,8 @@ export interface VoiceDecision {
   options: VoiceOption[];
   /** Admite respuesta libre (rama, aclaración para Claude). */
   freeText: boolean;
+  /** Lo que DABOT dice en voz alta: la pregunta y cómo responderla. */
+  speech: string;
 }
 
 export interface DecisionContext {
@@ -46,7 +48,25 @@ export interface DecisionContext {
 
 export const MAX_BRANCH_OPTIONS = 6;
 
+/** Cómo responder, dicho después de la pregunta: la pantalla no hace falta para contestar. */
+const HOW_TO_ANSWER: Record<DecisionKind, string> = {
+  jira_status: 'Responde sí o no.',
+  repos: 'Responde sí o no.',
+  regression: 'Responde sí o no.',
+  pull_request: 'Responde sí o no.',
+  jira_merge: 'Responde sí o no.',
+  jira_comment: 'Responde sí o no.',
+  env: 'Di: solo código, reintenta, o descarta.',
+  branch: 'Dime la rama, o elígela en pantalla.',
+  clarification: 'Dime tu respuesta y se la paso a Claude.',
+};
+
 export function pendingDecision(job: JobDetailDto, ctx: DecisionContext): VoiceDecision | undefined {
+  const d = buildDecision(job, ctx);
+  return d ? { ...d, speech: toSpeech(`${d.question} ${HOW_TO_ANSWER[d.kind]}`, 520) } : undefined;
+}
+
+function buildDecision(job: JobDetailDto, ctx: DecisionContext): Omit<VoiceDecision, 'speech'> | undefined {
   const base = { jobId: job.id, ticketKey: job.ticketKey };
   const question = plain(job.pendingQuestion ?? '');
   const has = (type: string) => job.events.some((e) => e.type === type);
@@ -67,16 +87,21 @@ export function pendingDecision(job: JobDetailDto, ctx: DecisionContext): VoiceD
       return {
         ...base,
         kind: 'branch',
-        question: `Selecciona la rama de origen para ${job.ticketKey}.`,
+        question: `Selecciona la rama origen para el ticket ${job.ticketKey}.`,
         options: ctx.branches.slice(0, MAX_BRANCH_OPTIONS).map((b) => ({ id: `branch:${b}`, label: b })),
         freeText: true,
       };
     case 'awaiting_repos': {
-      const repos = job.triageResult?.repos.map((r) => r.name) ?? [];
+      const repos = job.triageResult?.repos ?? [];
+      const first = repos[0];
+      const confidence = { high: 'alta', medium: 'media', low: 'baja' } as const;
+      const found = first
+        ? `Terminé el análisis de ${job.ticketKey}. El bug está en ${repos.map((r) => r.name).join(', ')}, con confianza ${confidence[first.confidence]}: ${shorten(plain(first.reason), 180)}`
+        : '';
       return {
         ...base,
         kind: 'repos',
-        question: repos.length ? `El bug parece estar en ${repos.join(', ')}. ¿Confirmo esos repositorios?` : question,
+        question: first ? `${found} ¿Confirmo ${repos.length > 1 ? 'esos repositorios' : 'ese repositorio'}?` : question,
         options: [
           { id: 'confirm', label: 'Confirmar repos' },
           { id: 'reject', label: 'Rechazar' },
@@ -156,4 +181,13 @@ export function pendingDecision(job: JobDetailDto, ctx: DecisionContext): VoiceD
     default:
       return undefined;
   }
+}
+
+/** Primeras frases hasta `max` caracteres, cerrando en punto. */
+export function shorten(text: string, max: number): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return /[.!?]$/.test(t) ? t : `${t}.`;
+  const cut = t.slice(0, max);
+  const end = cut.lastIndexOf('. ');
+  return end > max / 3 ? cut.slice(0, end + 1) : `${cut.replace(/\s+\S*$/, '')}…`;
 }

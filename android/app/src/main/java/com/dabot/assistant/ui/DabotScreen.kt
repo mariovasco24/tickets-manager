@@ -208,6 +208,14 @@ private fun SidePanel(state: UiState, openSettings: () -> Unit) {
     ) {
         StatusBar(state, openSettings)
         WakeDiagnostics(state)
+        state.speechProblem?.let { problem ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🔇 $problem", color = Palette.bad, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                if (problem.startsWith("Volumen")) {
+                    TextButton(onClick = { Dabot.actions.tryEmit(Action.RaiseVolume) }) { Text("Subir volumen") }
+                }
+            }
+        }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             val job = state.job
             val decision = state.decision

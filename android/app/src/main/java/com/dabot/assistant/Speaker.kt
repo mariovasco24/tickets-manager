@@ -16,8 +16,13 @@ class Speaker(
     context: Context,
     private val settings: Settings,
     private val onWord: () -> Unit,
-    /** Terminó (o falló) una frase. */
-    private val onDone: (utteranceId: String) -> Unit,
+    /**
+     * Terminó (o falló) una frase. No se llama `onDone`: dentro del listener de la síntesis
+     * ese nombre es su propio método, y la llamada se reencolaba a sí misma para siempre.
+     */
+    private val onFinished: (utteranceId: String) -> Unit,
+    /** Problema de la síntesis para mostrar en pantalla (null = todo bien). */
+    private val onProblem: (String?) -> Unit = {},
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val ids = AtomicInteger()
@@ -31,7 +36,8 @@ class Speaker(
                 pending.forEach { (text, id) -> speakNow(text, id) }
             } else {
                 Log.e(TAG, "La síntesis de voz no arrancó ($status)")
-                pending.forEach { (_, id) -> onDone(id) }
+                onProblem("La síntesis de voz no arrancó: revisa Ajustes → Administración general → Texto a voz")
+                pending.forEach { (_, id) -> onFinished(id) }
             }
             pending.clear()
         }
@@ -41,14 +47,24 @@ class Speaker(
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = Unit
             override fun onDone(utteranceId: String?) {
-                utteranceId?.let { id -> main.post { onDone(id) } }
+                utteranceId?.let { id -> main.post { onFinished(id) } }
             }
             @Deprecated("API antigua; se mantiene por compatibilidad")
             override fun onError(utteranceId: String?) {
-                utteranceId?.let { id -> main.post { onDone(id) } }
+                utteranceId?.let { id -> main.post { onFinished(id) } }
+            }
+            override fun onError(utteranceId: String?, errorCode: Int) {
+                Log.e(TAG, "Error de síntesis $errorCode")
+                main.post {
+                    onProblem(
+                        if (errorCode == TextToSpeech.ERROR_NOT_INSTALLED_YET) "La voz en español aún se está descargando en la tablet"
+                        else "Error de la voz ($errorCode): prueba otra voz en Ajustes → Texto a voz",
+                    )
+                    utteranceId?.let(onFinished)
+                }
             }
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                utteranceId?.let { id -> main.post { onDone(id) } }
+                utteranceId?.let { id -> main.post { onFinished(id) } }
             }
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
                 main.post(onWord)
@@ -60,7 +76,15 @@ class Speaker(
     fun configure() {
         if (!ready) return
         val locale = Locale.forLanguageTag(settings.language)
-        tts.language = locale
+        var result = tts.setLanguage(locale)
+        if (result < TextToSpeech.LANG_AVAILABLE) result = tts.setLanguage(Locale(locale.language))
+        onProblem(
+            when (result) {
+                TextToSpeech.LANG_MISSING_DATA -> "Falta la voz en español: Ajustes → Administración general → Texto a voz → instalar datos"
+                TextToSpeech.LANG_NOT_SUPPORTED -> "El motor de voz no tiene español: elige «Servicios de voz de Google» en Ajustes → Texto a voz"
+                else -> null
+            },
+        )
         tts.setSpeechRate(settings.speechRate)
         pickVoice(locale)?.let { tts.voice = it }
     }
@@ -76,7 +100,7 @@ class Speaker(
         ).firstOrNull()
     }
 
-    /** Encola una frase; devuelve su id (llega a onDone al terminar). */
+    /** Encola una frase; devuelve su id (llega a onFinished al terminar). */
     fun say(text: String): String {
         val id = "u${ids.incrementAndGet()}"
         if (ready) speakNow(text, id) else pending += text to id
@@ -86,7 +110,10 @@ class Speaker(
     private fun speakNow(text: String, id: String) {
         val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id) }
         val result = tts.speak(text, TextToSpeech.QUEUE_ADD, params, id)
-        if (result != TextToSpeech.SUCCESS) main.post { onDone(id) }
+        if (result != TextToSpeech.SUCCESS) {
+            onProblem("La voz no pudo hablar (error $result)")
+            main.post { onFinished(id) }
+        }
     }
 
     fun stop() {

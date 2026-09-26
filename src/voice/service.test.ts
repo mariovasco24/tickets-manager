@@ -111,7 +111,7 @@ describe('VoiceService: flujo completo por voz', () => {
     const q1 = said.at(-1)!;
     assert.equal(q1.decision?.kind, 'jira_status');
     assert.equal(q1.listen, true);
-    assert.match(q1.say, /A N 1234: ¿Muevo A N 1234 en Jira de "Open" a "In Progress"\?/);
+    assert.equal(q1.say, '¿Muevo A N 1234 en Jira de "Open" a "In Progress"? Responde sí o no.');
     assert.doesNotMatch(q1.say, /\*/);
 
     const r2 = await say('sí');
@@ -130,19 +130,20 @@ describe('VoiceService: flujo completo por voz', () => {
     await tick(60);
     const q3 = said.at(-1)!;
     assert.equal(q3.decision?.kind, 'repos');
-    assert.match(q3.say, /an-datagrid/);
+    assert.equal(q3.say, 'Terminé el análisis de A N 1234. El bug está en an-datagrid, con confianza alta: r. ¿Confirmo ese repositorio? Responde sí o no.');
+    assert.equal(q2.say, 'Selecciona la rama origen para el ticket A N 1234. Dime la rama, o elígela en pantalla.');
     assert.ok(said.some((a) => /Analizando en qué repositorios está A N 1234/.test(a.say)));
 
     await say('dale');
     await tick(80);
     const q4 = said.at(-1)!;
     assert.equal(q4.decision?.kind, 'jira_comment');
-    assert.match(q4.say, /^A N 1234 está solucionado\. Los tests pasan\. ¿Publico el reporte/);
-    assert.ok(said.some((a) => /Claude Code está trabajando en A N 1234/.test(a.say)));
+    assert.match(q4.say, /^Ya terminé con A N 1234\. Fixed comparator\. Los tests pasan\. ¿Publico el reporte en A N 1234 como comentario\? Responde sí o no\.$/);
+    assert.ok(said.some((a) => a.say === 'Claude Code está trabajando en A N 1234. Te aviso cuando termine o si tiene preguntas.'));
 
     await say('publícalo');
     await tick(40);
-    assert.match(said.at(-1)!.say, /Listo con A N 1234/);
+    assert.equal(said.at(-1)!.say, 'Todo listo con A N 1234: reporte publicado. No queda nada pendiente.');
     assert.deepEqual(calls.slice(1), ['jira true', 'answer release/9.5', 'confirm', 'comment true']);
   });
 

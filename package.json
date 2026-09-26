@@ -7,6 +7,7 @@
   "engines": {
     "node": ">=22"
   },
+  "packageManager": "pnpm@12.6.0",
   "scripts": {
     "dev": "tsx watch --ignore web --ignore dist --ignore data src/index.ts",
     "dev:web": "vite",
@@ -18,7 +19,8 @@
     "db:generate": "drizzle-kit generate",
     "simulate:jira": "tsx src/scripts/simulate-jira-webhook.ts",
     "worktrees:cleanup": "tsx src/scripts/cleanup-worktrees.ts",
-    "smoke": "node scripts/dev/smoke.mjs"
+    "smoke": "node scripts/dev/smoke.mjs",
+    "test": "tsx --test src/voice/*.test.ts"
   },
   "dependencies": {
     "@slack/bolt": "^5.1.0",

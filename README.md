@@ -18,16 +18,89 @@ Estado actual: **fase 5** + reproducción verificada en navegador. Ver [plan de 
 
 ## Puesta en marcha
 
-```bash
-pnpm install
-cp .env.example .env     # rellena los valores siguiendo la guía de abajo
-pnpm build:web           # compila el dashboard a dist/web (Express lo sirve en /)
-pnpm dev                 # arranca el servidor con recarga en caliente
-```
+### Primera instalación
 
-Al arrancar verás en el log si las credenciales de Jira y Slack son válidas y si el bot está
-dentro del canal. Los fallos de credenciales avisan pero no detienen el servidor, así puedes
-probar un lado sin tener el otro.
+1. **Node ≥ 22.** Comprueba con `node -v`. Si usas nvm: `nvm install 24 && nvm use 24`.
+
+2. **pnpm.** Si `pnpm -v` dice `command not found`, actívalo con corepack (viene con Node):
+
+   ```bash
+   corepack enable pnpm
+   ```
+
+   `package.json` fija la versión (`packageManager`), así que corepack usa la misma que el resto
+   del equipo. Con nvm, pnpm queda ligado a esa versión de Node: si cambias de versión, repite
+   el comando. Usa siempre pnpm, no `npm install` (generaría un `package-lock.json` que sobra).
+
+3. **Instalar dependencias:**
+
+   ```bash
+   pnpm install
+   ```
+
+   Si falla con `ERR_PNPM_IGNORED_BUILDS`, es que falta o se estropeó `pnpm-workspace.yaml`, que
+   viene en el repo. Desde pnpm 10, los paquetes que compilan binarios al instalarse
+   (`better-sqlite3` y `esbuild`) tienen que aprobarse ahí. Si ese archivo contiene
+   `set this to true or false`, cambia su contenido por este y vuelve a ejecutar `pnpm install`:
+
+   ```yaml
+   allowBuilds:
+     better-sqlite3: true
+     esbuild: true
+   ```
+
+4. **Configurar el entorno.** Copia `.env.example` a `.env` y rellénalo siguiendo la
+   [guía de credenciales](#guía-de-credenciales-paso-a-paso). Como mínimo, Jira (paso 1) y
+   Slack (paso 3). Revisa también `KNOWLEDGE_REPO_PATH` (el catálogo `qrvey_platform_knowledge`)
+   y `WORKTREES_DIR`.
+
+   ```bash
+   cp .env.example .env
+   ```
+
+5. **Opcional: ambientes de datos para reproducir en navegador.** Sin este archivo el servidor
+   arranca igual, pero avisa de que E2E no tiene ambiente, y los jobs de frontend te preguntarán
+   en el hilo. Ver [Reproducción en navegador](#reproducción-en-navegador-playwright).
+
+   ```bash
+   cp environments.example.json environments.json
+   ```
+
+6. **Compilar el dashboard.** Genera `dist/web`, que Express sirve en `/`. Repítelo cuando
+   cambie el frontend.
+
+   ```bash
+   pnpm build:web
+   ```
+
+7. **Arrancar el servidor** con recarga en caliente:
+
+   ```bash
+   pnpm dev
+   ```
+
+### Cómo saber que arrancó bien
+
+El arranque está listo cuando aparece `HTTP escuchando en http://localhost:3000`. La primera vez
+puede tardar unos segundos más. Después deberían salir estas líneas:
+
+- `Jira: credenciales OK`
+- `Slack: bot token OK`
+- `Slack: el bot es miembro del canal`
+- `Slack Socket Mode conectado`
+
+Los fallos de credenciales avisan pero no detienen el servidor, así puedes probar un lado sin
+tener el otro. Estos avisos también son normales mientras no configures lo correspondiente:
+
+- **`E2E activado pero el ambiente de datos elegido no está disponible`:** falta
+  `environments.json` (paso 5).
+- **`Webhook de Jira: https://xxxx-xxxx.trycloudflare.com/...`:** `PUBLIC_BASE_URL` sigue con el
+  valor de ejemplo. Solo importa si usas el webhook o Slack en modo HTTP (ver el paso 5 de la
+  guía, el del túnel).
+
+Si el log se queda parado antes de `HTTP escuchando` y no sale ningún error, puede que
+`tsx watch` haya perdido el proceso. Para verlo, corta con Ctrl+C y ejecuta
+`pnpm exec tsx src/index.ts`, que muestra el error real.
 
 El dashboard queda en <http://localhost:3000>. Si vas a tocar el frontend, en otra terminal
 `pnpm dev:web` levanta Vite en <http://localhost:5173> con recarga en caliente y proxy de
@@ -484,6 +557,81 @@ pnpm worktrees:cleanup --dry-run
 
 La limpieza borra el directorio y la rama local; **nunca** toca el remoto ni hace commit.
 
+## DABOT: la app de voz (Android)
+
+DABOT es una tercera forma de manejar los mismos jobs, además del hilo de Slack y el dashboard. Le
+hablas a una tablet y responde con cara, voz y pantalla. No arregla nada en la tablet: interpreta lo
+que dices y llama a las mismas funciones que los botones, así que **las confirmaciones de Jira, PR y
+comentario son exactamente las mismas** y todo queda también en el hilo de Slack (con :microphone:).
+
+```
+Tablet                                          Bugs Manager (este servicio)
+ "Dabot"  → Vosk offline (palabra de activación)
+ comando  → reconocedor de Android → POST /api/voice/command → misma lógica que /fix y los botones
+ voz      ← síntesis de Android    ← respuesta + anuncios SSE (GET /api/voice/events)
+```
+
+### Qué le puedes decir
+
+| Frase | Qué hace |
+|---|---|
+| "Dabot…" *(pitido)* "arregla el ticket A N 1234" | Como `/fix AN-1234`. También "a ene mil doscientos treinta y cuatro" o solo "el 1234" (proyecto `VOICE_DEFAULT_PROJECT`, y te lo confirma). |
+| "…arregla el 1234 desde develop, ten en cuenta el datagrid" | Rama origen (se empareja con las ramas del remoto: "release barra 9 punto 5" → `release/9.5`) y notas para Claude. |
+| "sí" / "no" / "la dos" | Responde lo pendiente: estado en Jira, rama, repos, entorno, spec de regresión, PR, "Waiting for Merge", comentario. |
+| *(cuando Claude pregunta)* cualquier frase | Va tal cual a la sesión, como responder en el hilo. |
+| "dile a Claude que…" | Mensaje libre a la sesión (encola, responde o reabre, igual que el hilo). |
+| "¿cómo va todo?" | Resumen de los jobs activos y lo que te espera. |
+| "descarta el ticket" | Pide confirmación antes de descartar. |
+| "repite" / "nada" | Repite lo último / cancela. |
+
+DABOT anuncia solo cada cambio relevante (pregunta nueva, Claude trabajando, fix terminado, fallo) y,
+si espera respuesta, vuelve a escuchar sin que digas "Dabot". Las opciones también se pueden tocar en
+pantalla. Con texto suelto y nada pendiente **no** manda nada a Claude: un falso "Dabot" no tiene efectos.
+
+### Servidor
+
+Ya va incluido: `src/voice/` (intérprete de frases, decisión pendiente por job, texto para voz, anuncios)
+y las rutas `/api/voice/{state,command,jobs/:id/decide,events}`. Variables en `.env.example`
+(`VOICE_TOKEN`, `VOICE_DEFAULT_PROJECT`, `VOICE_PROJECTS`, `VOICE_ANNOUNCE`). Tests: `pnpm test`.
+
+La tablet tiene que alcanzar el puerto del servicio. Opciones:
+- **Misma red Wi-Fi**: `http://<IP del Mac>:3000` (en macOS: `ipconfig getifaddr en1`, o en0).
+- **Tailscale** (recomendado, funciona fuera de casa y sin abrir nada a internet): instala Tailscale en la
+  tablet con tu cuenta y usa `http://<nombre-del-mac>.<tu-tailnet>.ts.net:3000`.
+No uses el túnel de cloudflared para la tablet: expondría la API a internet.
+
+### Compilar e instalar la app
+
+```bash
+cd android
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleRelease
+```
+
+El primer build descarga el modelo de voz de Vosk (40 MB, a `android/.vosk-cache/`). El APK queda en
+`android/app/build/outputs/apk/release/app-release.apk` (firmado con tu clave de debug). Pásalo a la
+tablet (USB, Quick Share o Drive), ábrelo y permite "instalar apps desconocidas" para esa app.
+
+En la tablet, la primera vez:
+1. Concede **micrófono** y **notificaciones**.
+2. En **Ajustes** de DABOT: URL del servidor, token si lo usas, idioma. "Probar voz" para oírla.
+3. **Abrir solo al encender**: concede "Aparecer encima" (Android solo deja abrir una app al arrancar con
+   ese permiso) y **Quitar restricciones de batería**.
+4. En Ajustes de Samsung: *Batería → Límites de uso en segundo plano → Apps que nunca se suspenden* →
+   añade DABOT. Déjala enchufada y activa *Batería → Proteger batería* (carga al 85 %).
+
+La pantalla queda siempre encendida y se atenúa tras unos minutos sin actividad (configurable); cualquier
+anuncio o "Dabot" la despierta. Tocar la cara = hablar; mantenerla pulsada = callar.
+
+### Límites conocidos
+
+- **Di "Dabot", espera el pitido y habla.** El detector decide al terminar la frase: si lo dices todo de
+  un tirón, DABOT responde "Dime" y tienes que repetir el comando.
+- La palabra de activación se midió con voces sintéticas (26/30 detecciones, 1 falso positivo en 120
+  frases de oficina). Con tu voz real puede variar; si falla mucho, toca la cara.
+- El comando lo transcribe el reconocedor de Google de la tablet: necesita internet.
+- La síntesis usa las voces instaladas en la tablet (Ajustes → Administración general → Texto a voz). La
+  voz de Google en español suena mejor que la de Samsung.
+
 ## Estructura
 
 ```
@@ -519,6 +667,12 @@ src/
   slack/notifier.ts    abrir hilo / responder en hilo
   slack/handlers.ts    @mención, /fix y respuestas en hilo → intake
   scripts/simulate-jira-webhook.ts
+  voice/parse.ts       frases de voz → intención (clave deletreada, rama, notas, sí/no/opción)
+  voice/decision.ts    qué espera cada job de una persona (mismas reglas que Slack y dashboard)
+  voice/speech.ts      mrkdwn de Slack → texto para pantalla y para la síntesis de voz
+  voice/service.ts     DABOT: comandos, decisiones y anuncios por SSE
+  voice/router.ts      /api/voice (state, command, decide, events)
+android/               app DABOT (Kotlin + Compose): cara, Vosk "Dabot", reconocedor y voz de Android
 drizzle/               migraciones SQL generadas (pnpm db:generate tras cambiar el schema)
 web/                   dashboard React + Vite (compila a dist/web)
   src/App.tsx          filtros, búsqueda, lista

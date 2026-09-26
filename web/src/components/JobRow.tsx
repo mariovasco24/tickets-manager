@@ -41,7 +41,7 @@ export function JobRow({ job, now, expanded, onToggle }: Props) {
           </span>
         </span>
         <span className="col-origin" title={`Solicitado por ${job.requestedBy}`}>
-          {job.source === 'webhook' ? 'webhook' : 'manual'} · {job.requestedBy.replace(/^<@|>$/g, '')}
+          {job.source === 'webhook' ? 'webhook' : job.source === 'voice' ? 'voz' : 'manual'} · {job.requestedBy.replace(/^<@|>$/g, '')}
         </span>
         <span className="col-time" title={`Creado ${formatDate(job.createdAt)} · Actualizado ${formatDate(job.updatedAt)}`}>
           <span>{formatDate(job.createdAt)}</span>

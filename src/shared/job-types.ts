@@ -81,7 +81,7 @@ export function isAwaiting(status: JobStatus): boolean {
   return AWAITING_STATUSES.includes(status);
 }
 
-export type TriggerSource = 'webhook' | 'manual';
+export type TriggerSource = 'webhook' | 'manual' | 'voice';
 export type TestsResult = 'passed' | 'failed' | 'none';
 
 /** Spec de regresión del fix, con el veredicto del servicio (rojo antes / verde después). */
@@ -96,7 +96,7 @@ export interface RegressionInfo {
   label: string;
   acceptedBy?: string;
 }
-export type AnswerVia = 'slack' | 'dashboard';
+export type AnswerVia = 'slack' | 'dashboard' | 'voice';
 
 export interface JobDto {
   id: string;

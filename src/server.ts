@@ -10,12 +10,16 @@ import { jiraWebhookRouter } from './jira/webhook.js';
 import type { JobService } from './jobs/service.js';
 import { logger } from './logger.js';
 import { projectRoot } from './util/project-root.js';
+import { voiceRouter } from './voice/router.js';
+import type { VoiceService } from './voice/service.js';
 
 export interface HttpDeps {
   config: Config;
   intake: Intake;
   jobs: JobService;
   sse: SseHub;
+  voice: VoiceService;
+  voiceSse: SseHub;
 }
 
 /**
@@ -23,7 +27,7 @@ export interface HttpDeps {
  * receiver de Slack necesitan el cuerpo crudo para validar firmas; la API del
  * dashboard lleva su propio parser bajo /api.
  */
-export function mountHttp(app: Express, { config, intake, jobs, sse }: HttpDeps): void {
+export function mountHttp(app: Express, { config, intake, jobs, sse, voice, voiceSse }: HttpDeps): void {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
@@ -44,8 +48,13 @@ export function mountHttp(app: Express, { config, intake, jobs, sse }: HttpDeps)
   }
 
   // Dashboard + API: auth básica solo si está configurada (VPS).
-  const auth = basicAuth(config.DASHBOARD_BASIC_AUTH_USER, config.DASHBOARD_BASIC_AUTH_PASSWORD);
+  const credentials = { user: config.DASHBOARD_BASIC_AUTH_USER, password: config.DASHBOARD_BASIC_AUTH_PASSWORD, bearerToken: config.VOICE_TOKEN };
+  const auth = basicAuth(credentials);
   if (config.DASHBOARD_BASIC_AUTH_USER) logger().info('Dashboard protegido con auth básica');
+
+  // DABOT (tablet): con VOICE_TOKEN exige el token aunque el dashboard esté abierto en local.
+  app.use('/api/voice', basicAuth({ ...credentials, requireToken: true }), voiceRouter(voice, voiceSse));
+  logger().info(config.VOICE_TOKEN ? 'API de DABOT en /api/voice (con token)' : 'API de DABOT en /api/voice (SIN token: define VOICE_TOKEN si la tablet no está en tu red privada)');
 
   app.use('/api', auth, apiRouter(config, jobs, intake, sse));
 

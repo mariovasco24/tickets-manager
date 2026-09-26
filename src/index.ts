@@ -20,6 +20,7 @@ import { registerSlackHandlers } from './slack/handlers.js';
 import { SlackNotifier } from './slack/notifier.js';
 import { resolveConfigPath } from './util/paths.js';
 import { projectRoot } from './util/project-root.js';
+import { VoiceService } from './voice/service.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -149,7 +150,17 @@ async function main(): Promise<void> {
   });
 
   registerSlackHandlers(slack.app, config, intake);
-  mountHttp(expressApp, { config, intake, jobs, sse });
+  // DABOT: canal SSE propio para no mandar a la tablet la transcripción entera de Claude Code.
+  const voiceSse = new SseHub();
+  const voice = new VoiceService(intake, jobs, voiceSse, {
+    defaultProject: config.VOICE_DEFAULT_PROJECT,
+    projects: config.VOICE_PROJECTS,
+    announce: config.VOICE_ANNOUNCE,
+    prEnabled: config.PR_ENABLED,
+    jiraMergeStatus: config.JIRA_ALLOW_TRANSITION ? config.JIRA_WAITING_FOR_MERGE_STATUS : undefined,
+    jiraAllowComment: config.JIRA_ALLOW_COMMENT,
+  });
+  mountHttp(expressApp, { config, intake, jobs, sse, voice, voiceSse });
 
   // Recuperar huérfanos ANTES de aceptar peticiones: si no, una respuesta que llegue justo al
   // arrancar relanza Claude y la recuperación la confundiría con una sesión perdida.
@@ -196,6 +207,7 @@ async function main(): Promise<void> {
     // systemd necesitan que el proceso muera para poder reiniciarlo.
     setTimeout(() => process.exit(0), 3000).unref();
     sse.close();
+    voiceSse.close();
     server.close();
     if (slack.socketMode) await slack.app.stop().catch(() => undefined);
     process.exit(0);

@@ -269,10 +269,7 @@ export class Intake {
         }
         const { job } = this.jobs.answer(jobId, answer, via, who);
         if (thread) {
-          const text =
-            via === 'dashboard'
-              ? `:desktop_computer: Rama origen elegida desde el dashboard: \`${answer}\`.`
-              : `Rama origen: \`${answer}\`.`;
+          const text = via === 'slack' ? `Rama origen: \`${answer}\`.` : `${viaIcon(via)} Rama origen elegida ${viaLabel(via)}: \`${answer}\`.`;
           await this.slack.reply(thread, `${text} :mag: Analizando en el catálogo de la plataforma en qué repositorios está el bug…`);
         }
         void this.runTriage(job.id);
@@ -303,7 +300,7 @@ export class Intake {
         }
         const { job } = this.jobs.answer(jobId, answer, via, who);
         if (thread) {
-          const prefix = via === 'dashboard' ? `:desktop_computer: Respuesta desde el dashboard: ${answer}` : `Respuesta de ${who} recibida`;
+          const prefix = via === 'slack' ? `Respuesta de ${who} recibida` : `${viaIcon(via)} Respuesta ${viaLabel(via)}: ${answer}`;
           await this.slack.reply(thread, `${prefix}. Reanudando la sesión de ${job.phase === 'triage' ? 'triaje' : 'Claude Code'}…`);
         }
         void this.runSession(job.id, job.phase, 'resume', buildResumePrompt(answer));
@@ -338,7 +335,7 @@ export class Intake {
     if (!message) throw new JobStateError('El mensaje está vacío');
     const thread = threadOf(job);
     const log = ticketLogger(job.ticketKey, { job: jobId, via });
-    const echo = via === 'dashboard' ? `:desktop_computer: Mensaje desde el dashboard: ${message}\n` : '';
+    const echo = via === 'slack' ? '' : `${viaIcon(via)} Mensaje ${viaLabel(via)}: ${message}\n`;
 
     switch (job.status) {
       case 'awaiting_jira_status':
@@ -455,7 +452,7 @@ export class Intake {
       });
     }
     const { job: confirmed } = this.jobs.answer(jobId, `repos: ${resolved.join(', ')}`, via, who);
-    if (thread && via === 'dashboard') await this.slack.reply(thread, `:desktop_computer: Repositorios confirmados desde el dashboard: ${resolved.join(', ')}. Creando worktrees…`);
+    if (thread && via !== 'slack') await this.slack.reply(thread, `${viaIcon(via)} Repositorios confirmados ${viaLabel(via)}: ${resolved.join(', ')}. Creando worktrees…`);
 
     void this.createWorktreesAndContinue(jobId, toCreate);
     return confirmed;
@@ -1752,6 +1749,15 @@ function findTransition(transitions: Array<{ id: string; name: string; to: strin
 
 function threadOf(job: JobDto): ThreadRef | undefined {
   return job.slackChannel && job.slackThreadTs ? { channel: job.slackChannel, ts: job.slackThreadTs } : undefined;
+}
+
+/** Eco en el hilo de lo que llega fuera de Slack (dashboard o DABOT por voz). */
+function viaIcon(via: AnswerVia): string {
+  return via === 'voice' ? ':microphone:' : ':desktop_computer:';
+}
+
+function viaLabel(via: AnswerVia): string {
+  return via === 'voice' ? 'por voz (DABOT)' : 'desde el dashboard';
 }
 
 function numbered(items: string[]): string {

@@ -394,7 +394,7 @@ export function JobDetail({ job, devMode, prEnabled, jiraMergeStatus }: Props) {
         <Field label="Rama creada" value={job.branch} mono copy />
         <Field label="Worktree" value={job.worktreePath} mono copy wide />
         <Field label="Solicitado por" value={job.requestedBy.replace(/^<@|>$/g, '')} />
-        <Field label="Origen" value={job.source === 'webhook' ? 'Webhook de Jira' : 'Manual (Slack)'} />
+        <Field label="Origen" value={job.source === 'webhook' ? 'Webhook de Jira' : job.source === 'voice' ? 'Voz (DABOT)' : 'Manual (Slack)'} />
         <Field label="Estado en Jira" value={job.ticketStatus} />
         <Field label="Creado" value={formatDate(job.createdAt)} />
         <Field label="Inicio del trabajo" value={formatDate(job.startedAt)} />

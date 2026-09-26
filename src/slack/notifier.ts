@@ -8,6 +8,7 @@ type KnownBlock = types.KnownBlock;
 const SOURCE_LABEL: Record<IncomingBug['source'], string> = {
   webhook: 'webhook de Jira',
   manual: 'manual (Slack)',
+  voice: 'por voz (DABOT)',
 };
 
 /**

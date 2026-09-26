@@ -26,6 +26,23 @@ const schema = z
     DASHBOARD_BASIC_AUTH_USER: z.string().optional().transform((s) => s?.trim() || undefined),
     DASHBOARD_BASIC_AUTH_PASSWORD: z.string().optional().transform((s) => s?.trim() || undefined),
 
+    // DABOT (app de voz Android). Token Bearer del dispositivo; vacío = mismo acceso que el dashboard.
+    VOICE_TOKEN: z.string().optional().transform((s) => s?.trim() || undefined),
+    /** Proyecto que se asume si solo dices el número ("arregla el 1234"). */
+    VOICE_DEFAULT_PROJECT: z.string().default('AN').transform((s) => s.trim().toUpperCase()),
+    /** Claves de proyecto conocidas, para interpretar "a ene 1234" como AN-1234. */
+    VOICE_PROJECTS: z
+      .string()
+      .default('AN')
+      .transform((s) =>
+        s
+          .split(',')
+          .map((t) => t.trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    /** De qué jobs habla DABOT sin que le preguntes: todos o solo los que pediste por voz. */
+    VOICE_ANNOUNCE: z.enum(['all', 'voice']).default('all'),
+
     // Jira (solo lectura)
     JIRA_BASE_URL: z.url(),
     JIRA_EMAIL: z.email(),

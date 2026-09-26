@@ -1,4 +1,4 @@
-export type TriggerSource = 'webhook' | 'manual';
+export type TriggerSource = 'webhook' | 'manual' | 'voice';
 
 /**
  * Objeto común al que convergen los dos disparadores (webhook de Jira y

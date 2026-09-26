@@ -1,0 +1,8 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+# Modelo de Vosk descargado por la tarea fetchVoskModel (40 MB)
+.vosk-cache/

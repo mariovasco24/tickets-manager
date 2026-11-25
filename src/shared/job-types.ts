@@ -81,7 +81,7 @@ export function isAwaiting(status: JobStatus): boolean {
   return AWAITING_STATUSES.includes(status);
 }
 
-export type TriggerSource = 'webhook' | 'manual' | 'voice';
+export type TriggerSource = 'webhook' | 'manual' | 'voice' | 'external';
 export type TestsResult = 'passed' | 'failed' | 'none';
 
 /** Spec de regresión del fix, con el veredicto del servicio (rojo antes / verde después). */
@@ -95,6 +95,19 @@ export interface RegressionInfo {
   verdict: 'verified' | 'mismatch' | 'unverified' | 'none' | 'pending' | 'accepted';
   label: string;
   acceptedBy?: string;
+}
+/** El bug ya estaba corregido en la rama origen: qué lo resolvió y la evidencia de que hoy funciona. */
+export interface AlreadyFixedInfo {
+  /** Ticket que lo corrigió (p. ej. AN-28960), si se identificó. */
+  fixedBy: string | null;
+  commit: string | null;
+  commitSubject: string | null;
+}
+/** "AN-28960 (commit 77b70d0 — fix(...))", o lo que se sepa de ello. */
+export function alreadyFixedLabel(info: AlreadyFixedInfo): string {
+  const commit = info.commit ? `commit ${info.commit}${info.commitSubject ? ` — ${info.commitSubject}` : ''}` : info.commitSubject ?? '';
+  if (info.fixedBy) return commit ? `${info.fixedBy} (${commit})` : info.fixedBy;
+  return commit;
 }
 export type AnswerVia = 'slack' | 'dashboard' | 'voice';
 
@@ -136,6 +149,8 @@ export interface JobDto {
   testsDetail: string | null;
   /** Spec de regresión y su veredicto. */
   regressionTest: RegressionInfo | null;
+  /** Presente si el bug ya estaba corregido y no hizo falta cambiar código. */
+  alreadyFixed: AlreadyFixedInfo | null;
   failureReason: string | null;
   /** Epoch ms */
   createdAt: number;

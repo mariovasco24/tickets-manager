@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   JOB_STATUSES,
   STATUS_LABELS,
+  alreadyFixedLabel,
   isAwaiting,
   isTerminal,
   type JobDetailDto,
@@ -394,7 +395,7 @@ export function JobDetail({ job, devMode, prEnabled, jiraMergeStatus }: Props) {
         <Field label="Rama creada" value={job.branch} mono copy />
         <Field label="Worktree" value={job.worktreePath} mono copy wide />
         <Field label="Solicitado por" value={job.requestedBy.replace(/^<@|>$/g, '')} />
-        <Field label="Origen" value={job.source === 'webhook' ? 'Webhook de Jira' : job.source === 'voice' ? 'Voz (DABOT)' : 'Manual (Slack)'} />
+        <Field label="Origen" value={job.source === 'webhook' ? 'Webhook de Jira' : job.source === 'voice' ? 'Voz (DABOT)' : job.source === 'external' ? 'Agente externo (API)' : 'Manual (Slack)'} />
         <Field label="Estado en Jira" value={job.ticketStatus} />
         <Field label="Creado" value={formatDate(job.createdAt)} />
         <Field label="Inicio del trabajo" value={formatDate(job.startedAt)} />
@@ -477,10 +478,17 @@ export function JobDetail({ job, devMode, prEnabled, jiraMergeStatus }: Props) {
               <pre className="prewrap">{job.notesForQa}</pre>
             </div>
           )}
-          <div className="report-block">
-            <strong>Branch:</strong> <span className="mono">{job.branch ?? '—'}</span>
-            {job.branch && <CopyButton text={job.branch} />}
-          </div>
+          {job.alreadyFixed ? (
+            <div className="report-block">
+              <strong>Already fixed by:</strong> <span className="mono">{alreadyFixedLabel(job.alreadyFixed) || '—'}</span>{' '}
+              <span className="muted">(sin cambios de código en {job.sourceBranch ?? 'la rama origen'})</span>
+            </div>
+          ) : (
+            <div className="report-block">
+              <strong>Branch:</strong> <span className="mono">{job.branch ?? '—'}</span>
+              {job.branch && <CopyButton text={job.branch} />}
+            </div>
+          )}
           {prOpened && (
             <div className="report-block">
               <strong>Pull request:</strong>{' '}

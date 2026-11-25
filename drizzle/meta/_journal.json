@@ -78,6 +78,13 @@
       "when": 1790027025590,
       "tag": "0010_spooky_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790707780175,
+      "tag": "0011_flimsy_black_panther",
+      "breakpoints": true
     }
   ]
 }

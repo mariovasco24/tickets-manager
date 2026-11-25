@@ -22,6 +22,7 @@ import {
   type JobStatus,
   type JobWorktreeDto,
   type RegressionInfo,
+  type AlreadyFixedInfo,
   type MessageKind,
   type TriageResult,
 } from '../shared/job-types.js';
@@ -253,6 +254,7 @@ function toDto(row: JobRow): JobDto {
     ...row,
     filesChanged: parseJsonArray(row.filesChanged),
     regressionTest: parseJsonObject<RegressionInfo>(row.regressionTest),
+    alreadyFixed: parseJsonObject<AlreadyFixedInfo>(row.alreadyFixed),
     triageResult,
   };
 }

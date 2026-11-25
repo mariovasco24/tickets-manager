@@ -182,6 +182,15 @@ Los campos issue, solution y notes_for_qa forman el reporte que lee el equipo de
 - notes_for_qa: OPTIONAL. Only if there is something QA must verify beyond the ticket, a side effect,
   a related ticket to re-check (cite its key), or a pre-existing test failure. Omit the field if nothing applies.
 
+Si el bug YA ESTÁ CORREGIDO en ${ctx.sourceBranch} (no se reproduce y encuentras en el historial el cambio que lo resolvió), NO reportes "fixed" sin cambios ni cannot_fix: es un resultado válido y el equipo gestiona el ticket con él.
+- Identifica el commit y el ticket que lo corrigieron (git log --oneline -S "<símbolo>" / git log --grep, git show <sha>) y comprueba que ese cambio cubre el caso del ticket.
+- No modifiques archivos de producción ni escribas spec de regresión en el repo: los worktrees deben quedar limpios.
+${ctx.e2e ? `- Graba la evidencia del comportamiento correcto: escribe el spec en "${ctx.e2e.specPath}" afirmando el comportamiento esperado del ticket, siguiendo las mismas pautas de reproducción por la interfaz, y ejecútalo SOLO en fase after (debe PASAR): node "${ctx.e2e.wrapperPath}" --phase after "${ctx.e2e.specPath}". Ese vídeo es la evidencia para QA. Reporta "reproduction":"reproduced" si pasó.\n` : '- No hay entorno de navegador: reporta "reproduction":"not_applicable" y explica en solution cómo lo verificaste en el código.\n'}
+\`\`\`json
+{"status":"already_fixed","fixed_by":"<TICKET-123 que lo corrigió, si se identifica>","commit":"<sha corto>","commit_subject":"<asunto del commit>","issue":"...","solution":"...","notes_for_qa":"...","reproduction":"reproduced|not_reproduced|not_applicable"}
+\`\`\`
+En already_fixed (EN INGLÉS): issue = what the ticket reported; solution = that no code change was needed, which commit/ticket fixed it and what that change does; notes_for_qa = opcional, igual que en fixed.
+
 \`\`\`json
 {"status":"cannot_fix","reason":"explicación concreta de por qué no es posible o no es prudente arreglarlo aquí"}
 \`\`\`
@@ -234,8 +243,10 @@ Protocolo:
    arreglado), de modo que con el bug presente falle. Usa \`import { test, expect } from '@playwright/test'\`.
 2. Ejecútalo ANTES de tocar código, con un timeout de 5 minutos:
    node "${e2e.wrapperPath}" --phase before "${e2e.specPath}"
-   Debe FALLAR. Si pasa, o no consigues montar la pantalla, NO inventes un arreglo: termina con
-   needs_clarification explicando qué intentaste y pregunta si continuar solo con código.
+   Debe FALLAR. Si pasa, NO inventes un arreglo: revisa el historial de git. Si un commit ya lo corrigió,
+   vuelve a ejecutar el spec con --phase after (será la evidencia) y termina con already_fixed. Si no
+   encuentras la causa de que pase, o no consigues montar la pantalla, termina con needs_clarification
+   explicando qué intentaste y pregunta si continuar solo con código.
 3. Aplica el fix.
 4. Inmediatamente después, ejecuta EL MISMO spec sin modificarlo, con un timeout de 5 minutos:
    node "${e2e.wrapperPath}" --phase after "${e2e.specPath}"
@@ -350,13 +361,27 @@ export function buildRegressionPrompt(label: string, reg: RegressionContext, pri
   ].join('\n');
 }
 
+/** Reportó "fixed" pero git no ve cambios: se le pide una vez que lo aclare. */
+export function buildNoChangesPrompt(e2e: Pick<E2EContext, 'specPath' | 'wrapperPath'> | undefined): string {
+  return [
+    'Reportaste "fixed" pero ningún worktree tiene cambios (git status limpio). Aclara cuál es la situación:',
+    '- Si el bug YA ESTABA CORREGIDO en la rama origen, reporta "status":"already_fixed" con fixed_by (ticket), commit y commit_subject, e issue/solution en inglés.',
+    e2e
+      ? `  Antes, graba la evidencia: spec en "${e2e.specPath}" que afirme el comportamiento correcto, ejecutado SOLO con: node "${e2e.wrapperPath}" --phase after "${e2e.specPath}" (debe pasar).`
+      : '  No hay entorno de navegador: usa "reproduction":"not_applicable".',
+    '- Si sí hacía falta un cambio, aplícalo en el worktree y vuelve a reportar "fixed".',
+    '- Si no es posible, reporta cannot_fix con el motivo.',
+    'Termina con el bloque JSON del contrato.',
+  ].join('\n');
+}
+
 /** El bloque llegó pero no cumple el contrato: se le dice exactamente qué corregir. */
 export function buildInvalidJsonPrompt(issues: string[]): string {
   return [
     'Tu bloque ```json final NO cumple el contrato:',
     ...issues.map((i) => `- ${i}`),
     '',
-    'Valores admitidos: "status" ∈ needs_clarification | needs_repos | fixed | cannot_fix. En fixed: "tests" ∈ passed | failed | none',
+    'Valores admitidos: "status" ∈ needs_clarification | needs_repos | fixed | already_fixed | cannot_fix. En fixed: "tests" ∈ passed | failed | none',
     '(es el resultado de la suite de tests del REPO; si solo validaste con la prueba de Playwright, pon "none" y cuéntalo en tests_detail),',
     '"reproduction" ∈ reproduced | not_reproduced | not_applicable, y "files_changed" es una lista de "<repo>/<ruta>".',
     'Responde ÚNICAMENTE con el bloque ```json corregido, sin texto antes ni después.',

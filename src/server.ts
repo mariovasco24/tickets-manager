@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { basicAuth } from './api/auth.js';
+import { externalRouter } from './api/external.js';
 import { apiRouter } from './api/router.js';
 import type { SseHub } from './api/sse.js';
 import type { Config } from './config.js';
@@ -47,6 +48,12 @@ export function mountHttp(app: Express, { config, intake, jobs, sse, voice, voic
     logger().info('Webhook de Jira desactivado (sin JIRA_WEBHOOK_SECRET). Disparo solo manual desde Slack.');
   }
 
+  // API para agentes externos: siempre con token propio, independiente de la auth del dashboard.
+  if (config.EXTERNAL_API_TOKENS.length) {
+    app.use('/external', externalRouter(config, jobs, intake));
+    logger().info({ callers: config.EXTERNAL_API_TOKENS.map((t) => t.name) }, 'API externa activa en /external/v1/fix-requests');
+  }
+
   // Dashboard + API: auth básica solo si está configurada (VPS).
   const credentials = { user: config.DASHBOARD_BASIC_AUTH_USER, password: config.DASHBOARD_BASIC_AUTH_PASSWORD, bearerToken: config.VOICE_TOKEN };
   const auth = basicAuth(credentials);
@@ -63,7 +70,7 @@ export function mountHttp(app: Express, { config, intake, jobs, sse, voice, voic
   if (existsSync(indexHtml)) {
     app.use(auth, express.static(webDist, { index: false, maxAge: '1h' }));
     // SPA fallback: cualquier ruta que no sea API/Slack/webhook devuelve el index.
-    app.get(/^\/(?!api\/|slack\/|webhooks\/|health$).*/, auth, (_req, res) => {
+    app.get(/^\/(?!api\/|slack\/|webhooks\/|external\/|health$).*/, auth, (_req, res) => {
       res.sendFile(indexHtml);
     });
     logger().info({ webDist }, 'Dashboard servido desde dist/web');

@@ -8,6 +8,7 @@ import {
   buildInitialPrompt,
   buildInvalidJsonPrompt,
   buildMissingJsonPrompt,
+  buildNoChangesPrompt,
   buildRegressionPrompt,
   buildReposAddedPrompt,
   buildReposRejectedPrompt,
@@ -21,7 +22,7 @@ import {
   type RegressionContext,
 } from './claude/prompt.js';
 import type { ClaudeRunner, RunOutcome, SessionAccess, StreamEvent } from './claude/runner.js';
-import { E2E_DIR, collectArtifacts, e2eDirFor, linkNodeModules, readPhaseReport, verdict, writeManifest } from './e2e/artifacts.js';
+import { E2E_DIR, alreadyFixedVerdict, collectArtifacts, e2eDirFor, linkNodeModules, readPhaseReport, verdict, writeManifest } from './e2e/artifacts.js';
 import { evaluateRegression } from './e2e/regression.js';
 import type { DevServerManager } from './e2e/devserver.js';
 import { EnvironmentError } from './e2e/devserver.js';
@@ -47,7 +48,7 @@ import { ticketLogger } from './logger.js';
 import { RepoRegistryError, type RepoRegistry } from './repos/registry.js';
 import { parseBitbucketRemote, type BitbucketClient } from './scm/bitbucket.js';
 import { buildPullRequestDescription } from './scm/pr-description.js';
-import { isTerminal, type AnswerVia, type JobDto, type JobPhase, type JobWorktreeDto,
+import { alreadyFixedLabel, isTerminal, type AlreadyFixedInfo, type AnswerVia, type JobDto, type JobPhase, type JobWorktreeDto,
   type RegressionInfo, type TriageResult } from './shared/job-types.js';
 import type { SlackNotifier } from './slack/notifier.js';
 import type { IncomingBug, JiraIssue, ThreadRef } from './types.js';
@@ -900,17 +901,17 @@ export class Intake {
    * Veredicto de la reproducción: lo decide el servicio leyendo los informes de
    * Playwright, no lo que diga el agente. Además recoge la evidencia.
    */
-  private async evaluateReproduction(jobId: string, claimed: string | undefined): Promise<{ label: string; mismatch: boolean }> {
+  private async evaluateReproduction(jobId: string, claimed: string | undefined, mode: 'fix' | 'already_fixed' = 'fix'): Promise<{ label: string; mismatch: boolean }> {
     const job = this.jobs.get(jobId);
     const primary = this.jobs.activeWorktrees(jobId).find((w) => w.isPrimary);
     if (!job || !primary) return { label: 'not applicable', mismatch: false };
-    if (job.e2eMode === 'code_only') return { label: 'not run (fixed with code only, no environment)', mismatch: false };
+    if (job.e2eMode === 'code_only') return { label: mode === 'fix' ? 'not run (fixed with code only, no environment)' : 'not run (no environment)', mismatch: false };
     if (job.e2eMode !== 'e2e') return { label: 'not applicable', mismatch: false };
 
     const e2eDir = e2eDirFor(this.opts.artifactsDir, jobId);
     const before = readPhaseReport(e2eDir, 'before');
     const after = readPhaseReport(e2eDir, 'after');
-    const v = verdict(before, after);
+    const v = mode === 'fix' ? verdict(before, after) : alreadyFixedVerdict(before, after);
     const log = ticketLogger(job.ticketKey, { job: jobId, component: 'e2e' });
     log.info({ before: before.status, after: after.status, claimed, verified: v.verified }, 'Veredicto de reproducción');
 
@@ -929,7 +930,7 @@ export class Intake {
       log.warn({ err: (err as Error).message }, 'No se pudo recoger la evidencia');
     }
 
-    const detail = before.firstError && v.verified ? ` — before failed with: ${before.firstError.split('\n')[0]}` : '';
+    const detail = mode === 'fix' && before.firstError && v.verified ? ` — before failed with: ${before.firstError.split('\n')[0]}` : '';
     return { label: `${v.label}${detail}`, mismatch: v.mismatch };
   }
 
@@ -948,7 +949,11 @@ export class Intake {
     for (const art of chosen) {
       const file = this.jobs.artifactPath(jobId, art.id);
       if (!file) continue;
-      const title = art.phase === 'before' ? `${job.ticketKey} — Before (bug)` : `${job.ticketKey} — After (fixed)`;
+      const title = job.alreadyFixed
+        ? `${job.ticketKey} — Current behavior (already fixed)`
+        : art.phase === 'before'
+          ? `${job.ticketKey} — Before (bug)`
+          : `${job.ticketKey} — After (fixed)`;
       try {
         await this.slack.uploadFile(thread, file, title);
       } catch (err) {
@@ -1486,6 +1491,15 @@ export class Intake {
         }
         const filesChanged = await this.detectChangedFiles(jobId, outcome.files_changed);
         if (filesChanged.length === 0) {
+          // Caso típico: el bug ya estaba corregido y Claude lo dice en el resumen. Se le pide una vez
+          // que lo reporte como already_fixed (con evidencia) en lugar de dar el job por fallido.
+          const alreadyAsked = (this.jobs.getDetail(jobId)?.events ?? []).some((e) => e.type === 'no_changes_requested');
+          if (!alreadyAsked && job.claudeSessionId) {
+            this.jobs.note(jobId, 'no_changes_requested', 'Claude Code reportó "fixed" sin cambios en los worktrees; se le pide que lo aclare');
+            if (thread) await this.slack.reply(thread, ':mag: Claude Code reportó "fixed" pero los worktrees no tienen cambios. Le pido que aclare si el bug ya estaba corregido (con evidencia) o si falta aplicar el cambio.');
+            void this.runSession(jobId, 'fix', 'resume', buildNoChangesPrompt(this.evidenceTarget(job)));
+            return;
+          }
           const reason = `Claude Code reportó "fixed" pero los worktrees no tienen cambios.${deniedNote ? ` ${deniedNote}` : ''}`;
           this.jobs.fail(jobId, reason);
           if (thread) {
@@ -1517,6 +1531,36 @@ export class Intake {
           return;
         }
         await this.finalizeFixed(jobId, outcome, filesChanged, deniedNote, regression);
+        return;
+      }
+
+      case 'already_fixed': {
+        if (phase === 'triage') {
+          const reason = 'El triaje reportó "already_fixed" sin haber revisado los worktrees; no es un resultado válido';
+          this.jobs.fail(jobId, reason);
+          if (thread) await this.slack.reply(thread, `:x: ${reason}.`);
+          return;
+        }
+        const dirty = await this.detectChangedFiles(jobId, []);
+        if (dirty.length) {
+          const alreadyAsked = (this.jobs.getDetail(jobId)?.events ?? []).some((e) => e.type === 'already_fixed_dirty');
+          const files = dirty.map((f) => `\`${f}\``).join(', ');
+          if (!alreadyAsked && job.claudeSessionId) {
+            this.jobs.note(jobId, 'already_fixed_dirty', `Claude Code reportó "already_fixed" pero hay cambios: ${dirty.join(', ')}`);
+            void this.runSession(
+              jobId,
+              'fix',
+              'resume',
+              `Reportaste "already_fixed" pero los worktrees tienen cambios: ${dirty.join(', ')}. Si el bug ya estaba corregido, revierte esos cambios a mano (sin git checkout/stash/reset) y vuelve a reportar already_fixed; si hacían falta, reporta "fixed". Termina con el bloque JSON del contrato.`,
+            );
+            return;
+          }
+          const reason = `Claude Code reportó "already_fixed" pero los worktrees tienen cambios: ${dirty.join(', ')}`;
+          this.jobs.fail(jobId, reason);
+          if (thread) await this.slack.reply(thread, `:x: Claude Code reportó "already_fixed" pero los worktrees tienen cambios: ${files}. Sesión: ${this.jobLink(jobId)}`);
+          return;
+        }
+        await this.finalizeAlreadyFixed(jobId, outcome, deniedNote);
         return;
       }
 
@@ -1586,6 +1630,69 @@ export class Intake {
       if (!(await this.offerPullRequest(jobId, thread))) await this.offerJiraComment(jobId, thread);
     }
     this.stopEnvIfTerminal(jobId);
+  }
+
+  /**
+   * Cierre de un bug que ya estaba corregido en la rama origen: mismo reporte y evidencia que un fix,
+   * sin PR (no hay nada que subir), y se ofrece dejar el comentario en el ticket.
+   */
+  private async finalizeAlreadyFixed(jobId: string, outcome: AlreadyFixedOutcome, deniedNote: string | undefined): Promise<void> {
+    const job = this.jobs.get(jobId);
+    if (!job) return;
+    const thread = threadOf(job);
+    const info: AlreadyFixedInfo = {
+      fixedBy: outcome.fixed_by?.trim() || null,
+      commit: outcome.commit?.trim() || null,
+      commitSubject: outcome.commit_subject?.trim() || null,
+    };
+    const by = alreadyFixedLabel(info);
+    const issue = outcome.issue.trim() || '(not provided)';
+    const solution = outcome.solution.trim() || `No code change was required: the defect ${by ? `was already fixed by ${by}` : 'is no longer reproducible'}.`;
+    const notesForQa = outcome.notes_for_qa?.trim() || null;
+    const repro = await this.evaluateReproduction(jobId, outcome.reproduction, 'already_fixed');
+    this.jobs.transition(jobId, 'fixed', `Ya estaba corregido${by ? ` por ${by}` : ''}; sin cambios de código`, {
+      reproduction: repro.label,
+      filesChanged: [],
+      testsResult: null,
+      testsDetail: null,
+      regressionTest: null,
+      alreadyFixed: info,
+      fixSummary: `${issue}\n\n${solution}`.trim(),
+      issue,
+      solution,
+      notesForQa,
+    });
+    this.jobs.note(jobId, 'already_fixed', `Bug ya corregido en ${job.sourceBranch ?? 'la rama origen'}${by ? ` por ${by}` : ''}`, { ...info });
+    if (thread) {
+      await this.slack.reply(
+        thread,
+        [
+          `:white_check_mark: *${job.ticketKey} already fixed*${by ? ` — resolved by ${by}` : ''}`,
+          '',
+          `*Issue:*\n${issue}`,
+          '',
+          `*Solution:*\n${solution}`,
+          notesForQa ? `\n*Notes for QA:*\n${notesForQa}` : undefined,
+          '',
+          `*Verified on:* \`${job.sourceBranch ?? '(source branch)'}\` — no code changes`,
+          `*Evidence:* ${repro.mismatch ? ':warning: ' : ''}${repro.label}`,
+          deniedNote ? `:warning: ${deniedNote}` : undefined,
+          `_Details: ${this.jobLink(jobId)}_`,
+        ]
+          .filter((l) => l !== undefined)
+          .join('\n'),
+      );
+      await this.uploadEvidence(jobId, thread);
+      // Sin PR: los worktrees están limpios. Se pasa directo al comentario en el ticket.
+      await this.offerJiraComment(jobId, thread);
+    }
+    this.stopEnvIfTerminal(jobId);
+  }
+
+  /** Spec y wrapper de la evidencia en navegador, si el job tiene entorno e2e. */
+  private evidenceTarget(job: JobDto): { specPath: string; wrapperPath: string } | undefined {
+    if (job.e2eMode !== 'e2e') return undefined;
+    return { specPath: path.join(e2eDirFor(this.opts.artifactsDir, job.id), `${job.ticketKey}.spec.ts`), wrapperPath: this.opts.wrapperPath };
   }
 
   /** Decisión humana sobre un fix sin spec: aceptarlo tal cual o descartar el job. */
@@ -1724,6 +1831,8 @@ export class Intake {
 }
 
 type FixedOutcome = Extract<ClaudeOutcome, { status: 'fixed' }>;
+type AlreadyFixedOutcome = Extract<ClaudeOutcome, { status: 'already_fixed' }>;
+
 
 /** Ticket mínimo reconstruido desde el job cuando Jira no está disponible. */
 function issueFromJob(job: JobDto): JiraIssue {

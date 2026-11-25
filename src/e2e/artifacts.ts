@@ -248,6 +248,21 @@ export function verdict(before: PhaseReport, after: PhaseReport): { verified: bo
   return { verified: false, label: `incomplete reproduction (before: ${before.status}, after: ${after.status})`, mismatch: true };
 }
 
+/**
+ * Bug ya corregido en la rama origen: no hay "antes" que demostrar, solo que el código actual se comporta
+ * bien. Vale el after en verde (o un before en verde: se ejecutó sobre el mismo código, sin cambios).
+ */
+export function alreadyFixedVerdict(before: PhaseReport, after: PhaseReport): { verified: boolean; label: string; mismatch: boolean } {
+  if (after.status === 'passed' || (after.status === 'missing' && before.status === 'passed')) {
+    return { verified: true, label: 'verified (the expected behavior is observed on the current code, without changes)', mismatch: false };
+  }
+  if (after.status === 'missing' && before.status === 'missing') {
+    return { verified: false, label: 'no automated evidence of the current behavior', mismatch: false };
+  }
+  const status = after.status === 'missing' ? before.status : after.status;
+  return { verified: false, label: `the evidence test does not pass on the current code (${status}): the bug may still be present`, mismatch: true };
+}
+
 // ---- Manifiesto y enlaces del directorio de la prueba --------------------------
 
 /** Lo lee el wrapper junto al spec: así no depende de flags, variables de entorno ni del cwd del agente. */

@@ -16,6 +16,7 @@ import {
   type TestsResult,
   type TriageResult,
   type RegressionInfo,
+  type AlreadyFixedInfo,
 } from '../shared/job-types.js';
 import type { IncomingBug, JiraIssue, ThreadRef } from '../types.js';
 import type { JobRepository, ListFilter } from './repository.js';
@@ -100,6 +101,7 @@ export class JobService extends EventEmitter<JobServiceEvents> {
       ...patch,
       filesChanged: patch.filesChanged ? JSON.stringify(patch.filesChanged) : undefined,
       regressionTest: patch.regressionTest === undefined ? undefined : patch.regressionTest ? JSON.stringify(patch.regressionTest) : null,
+      alreadyFixed: patch.alreadyFixed === undefined ? undefined : patch.alreadyFixed ? JSON.stringify(patch.alreadyFixed) : null,
       startedAt: status === 'working' && !prev.startedAt ? now : undefined,
       finishedAt: isTerminal(status) ? now : undefined,
       pendingQuestion: isAwaiting(status) ? (patch.pendingQuestion ?? prev.pendingQuestion) : null,
@@ -340,6 +342,7 @@ export interface JobPatch {
   testsResult: TestsResult | null;
   testsDetail: string | null;
   regressionTest: RegressionInfo | null;
+  alreadyFixed: AlreadyFixedInfo | null;
   failureReason: string | null;
 }
 

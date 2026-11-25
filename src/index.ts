@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     bitbucket ? 'Pull requests: se ofrecerá subir la rama y abrir el PR (con confirmación; nunca push a la rama origen)' : 'Pull requests desactivados (PR_ENABLED=false)',
   );
   const slack = createSlackApp(config, expressApp);
-  const notifier = new SlackNotifier(slack.app.client, config.SLACK_CHANNEL_ID);
+  const notifier = new SlackNotifier(slack.app.client, config.SLACK_CHANNEL_ID, { userIds: config.SLACK_MENTION_USER_IDS, sources: config.SLACK_MENTION_SOURCES });
   const intake = new Intake(jira, notifier, jobs, worktrees, repos, claude, devServers, {
     maxClarificationRounds: config.MAX_CLARIFICATION_ROUNDS,
     regressionRequired: config.REGRESSION_SPEC_REQUIRED,

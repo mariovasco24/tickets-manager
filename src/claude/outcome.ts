@@ -49,6 +49,19 @@ const outcomeSchema = z.discriminatedUnion('status', [
     /** Compatibilidad: resumen libre; si falta se compone de issue + solution. */
     summary: z.string().default(''),
   }),
+  /** El bug ya no se reproduce: otro cambio de la rama origen lo corrigió. Sin cambios en los worktrees. */
+  z.object({
+    status: z.literal('already_fixed'),
+    /** Ticket que lo corrigió (p. ej. AN-28960). */
+    fixed_by: z.string().trim().optional(),
+    commit: z.string().trim().optional(),
+    commit_subject: z.string().trim().optional(),
+    issue: z.string().default(''),
+    solution: z.string().default(''),
+    notes_for_qa: z.string().optional(),
+    /** reproduced aquí = se grabó el comportamiento correcto en navegador (fase after verde). Lo verifica el servicio. */
+    reproduction: z.enum(['reproduced', 'not_reproduced', 'not_applicable']).optional(),
+  }),
   z.object({
     status: z.literal('cannot_fix'),
     reason: z.string().default('sin motivo indicado'),
@@ -97,6 +110,10 @@ const REPRO_SYNONYMS: Record<string, 'reproduced' | 'not_reproduced' | 'not_appl
 function normalize(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const obj = { ...(raw as Record<string, unknown>) };
+  if (obj.status === 'already_fixed') {
+    normalizeReproduction(obj);
+    return obj;
+  }
   if (obj.status !== 'fixed') return obj;
   if (typeof obj.files_changed === 'string') obj.files_changed = [obj.files_changed];
   if (obj.regression_test && typeof obj.regression_test === 'object') {
@@ -121,12 +138,15 @@ function normalize(raw: unknown): unknown {
       }
     }
   }
-  if (typeof obj.reproduction === 'string') {
-    const key = obj.reproduction.trim().toLowerCase();
-    if (['reproduced', 'not_reproduced', 'not_applicable'].includes(key)) obj.reproduction = key;
-    else if (REPRO_SYNONYMS[key]) obj.reproduction = REPRO_SYNONYMS[key];
-  }
+  normalizeReproduction(obj);
   return obj;
+}
+
+function normalizeReproduction(obj: Record<string, unknown>): void {
+  if (typeof obj.reproduction !== 'string') return;
+  const key = obj.reproduction.trim().toLowerCase();
+  if (['reproduced', 'not_reproduced', 'not_applicable'].includes(key)) obj.reproduction = key;
+  else if (REPRO_SYNONYMS[key]) obj.reproduction = REPRO_SYNONYMS[key];
 }
 
 /**

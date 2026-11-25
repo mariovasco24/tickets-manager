@@ -9,6 +9,7 @@ const SOURCE_LABEL: Record<IncomingBug['source'], string> = {
   webhook: 'webhook de Jira',
   manual: 'manual (Slack)',
   voice: 'por voz (DABOT)',
+  external: 'agente externo (API)',
 };
 
 /**
@@ -20,6 +21,8 @@ export class SlackNotifier {
   constructor(
     private readonly client: WebClient,
     private readonly channel: string,
+    /** A quién mencionar en el mensaje raíz y para qué orígenes (ver SLACK_MENTION_USER_IDS). */
+    private readonly mention: { userIds: string[]; sources: IncomingBug['source'][] } = { userIds: [], sources: [] },
   ) {}
 
   async openThread(issue: JiraIssue, bug: IncomingBug): Promise<ThreadRef> {
@@ -33,8 +36,10 @@ export class SlackNotifier {
       .filter(Boolean)
       .join('  ·  ');
 
+    // La mención hace sonar el aviso y suscribe al hilo, así también llegan las preguntas siguientes.
+    const mentions = this.mention.sources.includes(bug.source) ? this.mention.userIds.map((id) => `<@${id}>`).join(' ') : '';
     const blocks: KnownBlock[] = [
-      { type: 'section', text: { type: 'mrkdwn', text: title } },
+      { type: 'section', text: { type: 'mrkdwn', text: mentions ? `${mentions} ${title}` : title } },
       { type: 'context', elements: [{ type: 'mrkdwn', text: meta }] },
     ];
     if (bug.notes) {
@@ -43,7 +48,7 @@ export class SlackNotifier {
 
     const res = await this.client.chat.postMessage({
       channel: this.channel,
-      text: `${issue.key} — ${issue.summary}`,
+      text: `${mentions ? `${mentions} ` : ''}${issue.key} — ${issue.summary}`,
       blocks,
       unfurl_links: false,
     });
@@ -260,7 +265,7 @@ export class SlackNotifier {
           { type: 'button', action_id: 'jira_comment_no', text: { type: 'plain_text', text: 'No publicar' }, value: jobId },
         ],
       },
-      { type: 'context', elements: [{ type: 'mrkdwn', text: 'Se publica el mismo reporte que ves arriba: Issue, Solution, Notes for QA, rama, archivos, tests y reproducción.' }] },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: 'Se publica el mismo reporte que ves arriba: Issue, Solution, Notes for QA, rama o ticket que lo corrigió, tests y reproducción/evidencia.' }] },
     ];
     return this.reply(thread, question, blocks);
   }

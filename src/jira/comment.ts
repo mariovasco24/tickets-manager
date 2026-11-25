@@ -1,4 +1,4 @@
-import type { JobDto } from '../shared/job-types.js';
+import { alreadyFixedLabel, type JobDto } from '../shared/job-types.js';
 
 /**
  * Construye el comentario del fix en Atlassian Document Format, con la misma
@@ -66,7 +66,18 @@ export function buildFixComment(job: JobDto, videos: CommentVideo[], opts: { emb
   content.push(label('Solution:'), ...body(job.solution ?? '(not provided)'));
   if (job.notesForQa) content.push(label('Notes for QA:'), ...body(job.notesForQa));
 
-  if (job.branch) content.push(paragraph(text('Branch: ', ['strong']), text(job.branch, ['code'])));
+  const fixed = job.alreadyFixed;
+  if (fixed) {
+    // Ya corregido: se enlaza el ticket que lo resolvió y no hay rama ni PR que mostrar.
+    const byUrl = fixed.fixedBy && job.ticketUrl ? job.ticketUrl.replace(/[^/]+$/, fixed.fixedBy) : undefined;
+    const by: Node[] = fixed.fixedBy
+      ? [byUrl ? { ...text(fixed.fixedBy), marks: [{ type: 'link', attrs: { href: byUrl } }] } : text(fixed.fixedBy)]
+      : [];
+    const commit = alreadyFixedLabel({ ...fixed, fixedBy: null });
+    if (by.length || commit) {
+      content.push(paragraph(text('Already fixed by: ', ['strong']), ...by, ...(commit ? [text(by.length ? ` (${commit})` : commit)] : [])));
+    }
+  } else if (job.branch) content.push(paragraph(text('Branch: ', ['strong']), text(job.branch, ['code'])));
   // Sin lista de archivos: en Jira sobra (está en el PR y en Slack). Decisión del equipo.
   // Tarjeta (inlineCard) en el intento rico; enlace plano en el reintento, por si el sitio la rechaza.
   for (const pr of prs) {
@@ -83,7 +94,7 @@ export function buildFixComment(job: JobDto, videos: CommentVideo[], opts: { emb
   for (const phase of ['before', 'after'] as const) {
     const video = videos.find((v) => v.phase === phase);
     if (!video) continue;
-    content.push(paragraph(text(phase === 'before' ? 'Before (bug):' : 'After (fixed):', ['strong'])));
+    content.push(paragraph(text(fixed ? 'Current behavior (already fixed):' : phase === 'before' ? 'Before (bug):' : 'After (fixed):', ['strong'])));
     content.push(opts.embedVideos ? media(video) : link(video));
   }
 

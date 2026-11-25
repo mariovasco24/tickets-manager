@@ -43,6 +43,38 @@ const schema = z
     /** De qué jobs habla DABOT sin que le preguntes: todos o solo los que pediste por voz. */
     VOICE_ANNOUNCE: z.enum(['all', 'voice']).default('all'),
 
+    // API para agentes externos (p. ej. el agente de QA): /external/v1/fix-requests.
+    /** "nombre:token,nombre2:token2". Vacío = la API externa no se monta. Tokens de 32+ caracteres. */
+    EXTERNAL_API_TOKENS: z
+      .string()
+      .default('')
+      .transform((s, ctx) => {
+        const out: Array<{ name: string; token: string }> = [];
+        for (const entry of s.split(',').map((e) => e.trim()).filter(Boolean)) {
+          const i = entry.indexOf(':');
+          const name = i > 0 ? entry.slice(0, i).trim() : '';
+          const token = i > 0 ? entry.slice(i + 1).trim() : '';
+          if (!name || token.length < 32) {
+            ctx.addIssue({ code: 'custom', message: `entrada inválida "${name || entry.slice(0, 8)}…": usa nombre:token con un token de 32+ caracteres` });
+            continue;
+          }
+          out.push({ name, token });
+        }
+        return out;
+      }),
+    /** Proyectos de Jira que la API externa acepta (vacío = cualquiera). */
+    EXTERNAL_ALLOWED_PROJECTS: z
+      .string()
+      .default('')
+      .transform((s) =>
+        s
+          .split(',')
+          .map((t) => t.trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    /** Máximo de peticiones de fix por agente y hora. */
+    EXTERNAL_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(20),
+
     // Jira (solo lectura)
     JIRA_BASE_URL: z.url(),
     JIRA_EMAIL: z.email(),
@@ -141,6 +173,28 @@ const schema = z
     SLACK_SOCKET_MODE: z.stringbool().default(true),
     SLACK_APP_TOKEN: z.string().startsWith('xapp-').optional(),
     SLACK_CHANNEL_ID: z.string().regex(/^[CG][A-Z0-9]+$/, 'debe ser un ID de canal (C… o G…), no el nombre'),
+    /** IDs de usuario (U…) a mencionar en el mensaje raíz cuando el job no lo lanzó una persona desde Slack: así suena el aviso y siguen el hilo. */
+    SLACK_MENTION_USER_IDS: z
+      .string()
+      .default('')
+      .transform((s) =>
+        s
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.string().regex(/^[UW][A-Z0-9]+$/, 'debe ser un ID de usuario de Slack (U…)'))),
+    /** Orígenes que llevan la mención (manual = lo pediste tú en Slack, no hace falta avisarte). */
+    SLACK_MENTION_SOURCES: z
+      .string()
+      .default('external,webhook')
+      .transform((s) =>
+        s
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.enum(['webhook', 'manual', 'voice', 'external']))),
   })
   .superRefine((c, ctx) => {
     if (c.SLACK_SOCKET_MODE && !c.SLACK_APP_TOKEN) {

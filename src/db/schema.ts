@@ -50,6 +50,8 @@ export const jobs = sqliteTable(
     testsDetail: text('tests_detail'),
     /** JSON RegressionInfo: spec de regresión del fix y veredicto del servicio. */
     regressionTest: text('regression_test'),
+    /** JSON AlreadyFixedInfo: el bug ya estaba corregido en la rama origen (sin cambios en los worktrees). */
+    alreadyFixed: text('already_fixed'),
     failureReason: text('failure_reason'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),

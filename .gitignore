@@ -10,3 +10,5 @@ data/
 .DS_Store
 .rig/
 environments.json
+*.tar.gz.enc
+*.antes-de-migrar-*
